@@ -24,13 +24,15 @@ from .. import logger
 log = logger.create()
 
 
-try: from . import goodreads
+try: from . import goodreads_support
 except ImportError as err:
-    log.warning("goodreads: %s", err)
-    goodreads = None
+    log.debug("cannot import goodreads, showing authors-metadata will not work: %s", err)
+    goodreads_support = None
 
 
 try: from . import simpleldap as ldap
 except ImportError as err:
-    log.warning("simpleldap: %s", err)
+    log.debug("cannot import simpleldap, logging in with ldap will not work: %s", err)
     ldap = None
+
+

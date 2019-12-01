@@ -46,7 +46,7 @@ from .web import admin_required, render_title_template, before_request, unconfig
 
 feature_support = {
         'ldap': False, # bool(services.ldap),
-        'goodreads': bool(services.goodreads)
+        'goodreads': bool(services.goodreads_support)
     }
 
 # try:
@@ -272,6 +272,8 @@ def _configuration_update_helper():
     gdrive_secrets = {}
     gdriveError = gdriveutils.get_error_text(gdrive_secrets)
     if "config_use_google_drive" in to_save and not config.config_use_google_drive and not gdriveError:
+        with open(gdriveutils.CLIENT_SECRETS, 'r') as settings:
+            gdrive_secrets = json.load(settings)['web']
         if not gdrive_secrets:
             return _configuration_result('client_secrets.json is not configured for web application')
         gdriveutils.update_settings(
@@ -338,8 +340,10 @@ def _configuration_update_helper():
     _config_checkbox("config_use_goodreads")
     _config_string("config_goodreads_api_key")
     _config_string("config_goodreads_api_secret")
-    if services.goodreads:
-        services.goodreads.connect(config.config_goodreads_api_key, config.config_goodreads_api_secret, config.config_use_goodreads)
+    if services.goodreads_support:
+        services.goodreads_support.connect(config.config_goodreads_api_key,
+                                           config.config_goodreads_api_secret,
+                                           config.config_use_goodreads)
 
     _config_int("config_updatechannel")
 
@@ -411,7 +415,8 @@ def _configuration_result(error_flash=None, gdriveError=None):
     if gdriveError:
         gdriveError = _(gdriveError)
     else:
-        gdrivefolders = gdriveutils.listRootFolders()
+        if config.config_use_google_drive and not gdrive_authenticate:
+            gdrivefolders = gdriveutils.listRootFolders()
 
     show_back_button = current_user.is_authenticated
     show_login_button = config.db_configured and not current_user.is_authenticated
@@ -561,7 +566,6 @@ def edit_user(user_id):
         else:
             if "password" in to_save and to_save["password"]:
                 content.password = generate_password_hash(to_save["password"])
-
             anonymous = content.is_anonymous
             content.role = constants.selected_roles(to_save)
             if anonymous:
@@ -599,6 +603,21 @@ def edit_user(user_id):
                     return render_title_template("user_edit.html", translations=translations, languages=languages,
                                                  new_user=0, content=content, downloads=downloads, registered_oauth=oauth_check,
                                                  title=_(u"Edit User %(nick)s", nick=content.nickname), page="edituser")
+            if "nickname" in to_save and to_save["nickname"] != content.nickname:
+                # Query User nickname, if not existing, change
+                if not ub.session.query(ub.User).filter(ub.User.nickname == to_save["nickname"]).scalar():
+                    content.nickname = to_save["nickname"]
+                else:
+                    flash(_(u"This username is already taken"), category="error")
+                    return render_title_template("user_edit.html",
+                                                 translations=translations,
+                                                 languages=languages,
+                                                 new_user=0, content=content,
+                                                 downloads=downloads,
+                                                 registered_oauth=oauth_check,
+                                                 title=_(u"Edit User %(nick)s",
+                                                         nick=content.nickname),
+                                                 page="edituser")
 
             if "kindle_mail" in to_save and to_save["kindle_mail"] != content.kindle_mail:
                 content.kindle_mail = to_save["kindle_mail"]

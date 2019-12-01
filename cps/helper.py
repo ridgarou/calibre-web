@@ -54,7 +54,7 @@ except ImportError:
     use_unidecode = False
 
 try:
-    from PIL import Image
+    from PIL import Image as PILImage
     use_PIL = True
 except ImportError:
     use_PIL = False
@@ -183,7 +183,7 @@ def check_read_formats(entry):
     bookformats = list()
     if len(entry.data):
         for ele in iter(entry.data):
-            if ele.format in EXTENSIONS_READER:
+            if ele.format.upper() in EXTENSIONS_READER:
                 bookformats.append(ele.format.lower())
     return bookformats
 
@@ -497,9 +497,9 @@ def save_cover(img, book_path):
         # convert to jpg because calibre only supports jpg
         if content_type in ('image/png', 'image/webp'):
             if hasattr(img,'stream'):
-                imgc = Image.open(img.stream)
+                imgc = PILImage.open(img.stream)
             else:
-                imgc = Image.open(io.BytesIO(img.content))
+                imgc = PILImage.open(io.BytesIO(img.content))
             im = imgc.convert('RGB')
             tmp_bytesio = io.BytesIO()
             im.save(tmp_bytesio, format='JPEG')
@@ -509,7 +509,7 @@ def save_cover(img, book_path):
             log.error("Only jpg/jpeg files are supported as coverfile")
             return False
 
-    if ub.config.config_use_google_drive:
+    if config.config_use_google_drive:
         tmpDir = gettempdir()
         if save_cover_from_filestorage(tmpDir, "uploaded_cover.jpg", img) is True:
             gd.uploadFileToEbooksFolder(os.path.join(book_path, 'cover.jpg'),
@@ -658,6 +658,11 @@ def common_filters():
         db.Books.tags.any(db.Tags.name.in_(config.mature_content_tags()))
     return and_(lang_filter, ~content_rating_filter)
 
+def tags_filters():
+    return ~(false() if current_user.mature_content else \
+        db.Tags.name.in_(config.mature_content_tags()))
+    # return db.session.query(db.Tags).filter(~content_rating_filter).order_by(db.Tags.name).all()
+
 
 # Creates for all stored languages a translated speaking name in the array for the UI
 def speaking_language(languages=None):
@@ -715,9 +720,9 @@ def fill_indexpage(page, database, db_filter, order, *join):
     return entries, randm, pagination
 
 
-def get_typeahead(database, query, replace=('','')):
+def get_typeahead(database, query, replace=('',''), tag_filter=true()):
     db.session.connection().connection.connection.create_function("lower", 1, lcase)
-    entries = db.session.query(database).filter(func.lower(database.name).ilike("%" + query + "%")).all()
+    entries = db.session.query(database).filter(tag_filter).filter(func.lower(database.name).ilike("%" + query + "%")).all()
     json_dumps = json.dumps([dict(name=r.name.replace(*replace)) for r in entries])
     return json_dumps
 
@@ -753,9 +758,12 @@ def get_cc_columns():
 
 def get_download_link(book_id, book_format):
     book_format = book_format.split(".")[0]
-    book = db.session.query(db.Books).filter(db.Books.id == book_id).first()
-    data = db.session.query(db.Data).filter(db.Data.book == book.id)\
-        .filter(db.Data.format == book_format.upper()).first()
+    book = db.session.query(db.Books).filter(db.Books.id == book_id).filter(common_filters()).first()
+    if book:
+        data = db.session.query(db.Data).filter(db.Data.book == book.id)\
+            .filter(db.Data.format == book_format.upper()).first()
+    else:
+        abort(404)
     if data:
         # collect downloaded books only for registered user and not for anonymous user
         if current_user.is_authenticated:
@@ -772,9 +780,22 @@ def get_download_link(book_id, book_format):
     else:
         abort(404)
 
+def check_exists_book(authr,title):
+    db.session.connection().connection.connection.create_function("lower", 1, lcase)
+    q = list()
+    authorterms = re.split(r'\s*&\s*', authr)
+    for authorterm in authorterms:
+        q.append(db.Books.authors.any(func.lower(db.Authors.name).ilike("%" + authorterm + "%")))
 
+    return db.session.query(db.Books).filter(
+        and_(db.Books.authors.any(and_(*q)),
+            func.lower(db.Books.title).ilike("%" + title + "%")
+            )).first()
 
 ############### Database Helper functions
 
 def lcase(s):
-    return unidecode.unidecode(s.lower())
+    try:
+        return unidecode.unidecode(s.lower())
+    except Exception as e:
+        log.exception(e)

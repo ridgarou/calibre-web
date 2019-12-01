@@ -47,7 +47,7 @@ def requires_basic_auth_if_no_ano(f):
     def decorated(*args, **kwargs):
         auth = request.authorization
         if config.config_anonbrowse != 1:
-            if not auth or not check_auth(auth.username, auth.password):
+            if not auth or auth.type != 'basic' or not check_auth(auth.username, auth.password):
                 return authenticate()
         return f(*args, **kwargs)
     if config.config_login_type == constants.LOGIN_LDAP and services.ldap:
@@ -56,6 +56,7 @@ def requires_basic_auth_if_no_ano(f):
 
 
 @opds.route("/opds/")
+@opds.route("/opds")
 @requires_basic_auth_if_no_ano
 def feed_index():
     return render_xml_template('index.xml')
@@ -218,7 +219,7 @@ def feed_series(book_id):
 @requires_basic_auth_if_no_ano
 def feed_shelfindex(public):
     off = request.args.get("offset") or 0
-    if public is not 0:
+    if public != 0:
         shelf = g.public_shelfes
         number = len(shelf)
     else:
@@ -260,9 +261,10 @@ def opds_download_link(book_id, book_format):
     return get_download_link(book_id,book_format)
 
 
+@opds.route("/ajax/book/<string:uuid>/<library>")
 @opds.route("/ajax/book/<string:uuid>")
 @requires_basic_auth_if_no_ano
-def get_metadata_calibre_companion(uuid):
+def get_metadata_calibre_companion(uuid, library):
     entry = db.session.query(db.Books).filter(db.Books.uuid.like("%" + uuid + "%")).first()
     if entry is not None:
         js = render_template('json.txt', entry=entry)
@@ -288,7 +290,7 @@ def check_auth(username, password):
         username=username.encode('windows-1252')
     user = ub.session.query(ub.User).filter(func.lower(ub.User.nickname) ==
                                             username.decode('utf-8').lower()).first()
-    return bool(user and check_password_hash(user.password, password))
+    return bool(user and check_password_hash(str(user.password), password))
 
 
 def authenticate():
